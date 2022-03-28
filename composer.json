@@ -1,0 +1,10 @@
+{
+	"name": "myphps/worker",
+	"description": "copy from workerman",
+	"keywords": ["worker"],
+	"homepage": "https://github.com/ncwsky/worker",
+    "minimum-stability": "dev",
+	"require": {
+		"php": ">=5.4.0"
+	}
+}

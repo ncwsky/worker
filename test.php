@@ -11,7 +11,10 @@ $worker->onWorkerStart = function (\Worker\Worker $worker) {
         echo 'okT-' . $worker->id . ':'. time(). PHP_EOL;
     });
 
+    while(1){
         echo 'ok-' . $worker->id . ':'. time(). PHP_EOL;
+    }
+
 
 };
 $worker->onWorkerStop = function (\Worker\Worker $worker) {
