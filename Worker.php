@@ -137,20 +137,6 @@ class Select implements EventInterface
     protected $_readFds = array();
 
     /**
-     * Fds waiting for write event.
-     *
-     * @var array
-     */
-    protected $_writeFds = array();
-
-    /**
-     * Fds waiting for except event.
-     *
-     * @var array
-     */
-    protected $_exceptFds = array();
-
-    /**
      * Timer scheduler.
      * {['data':timer_id, 'priority':run_timestamp], ..}
      *
@@ -181,13 +167,6 @@ class Select implements EventInterface
     protected $_selectTimeout = 100000000;
 
     /**
-     * Paired socket channels
-     *
-     * @var array
-     */
-    protected $channel = array();
-
-    /**
      * Construct.
      */
     public function __construct()
@@ -204,25 +183,9 @@ class Select implements EventInterface
     {
         switch ($flag) {
             case self::EV_READ:
-            case self::EV_WRITE:
-                $count = $flag === self::EV_READ ? \count($this->_readFds) : \count($this->_writeFds);
-                if ($count >= 1024) {
-                    echo "Warning: system call select exceeded the maximum number of connections 1024, please install event/libevent extension for more connections.\n";
-                } else if (\DIRECTORY_SEPARATOR !== '/' && $count >= 256) {
-                    echo "Warning: system call select exceeded the maximum number of connections 256.\n";
-                }
                 $fd_key                           = (int)$fd;
                 $this->_allEvents[$fd_key][$flag] = array($func, $fd);
-                if ($flag === self::EV_READ) {
-                    $this->_readFds[$fd_key] = $fd;
-                } else {
-                    $this->_writeFds[$fd_key] = $fd;
-                }
-                break;
-            case self::EV_EXCEPT:
-                $fd_key = (int)$fd;
-                $this->_allEvents[$fd_key][$flag] = array($func, $fd);
-                $this->_exceptFds[$fd_key] = $fd;
+                $this->_readFds[$fd_key] = $fd;
                 break;
             case self::EV_SIGNAL:
                 // Windows not support signal.
@@ -269,19 +232,6 @@ class Select implements EventInterface
             case self::EV_READ:
                 unset($this->_allEvents[$fd_key][$flag], $this->_readFds[$fd_key]);
                 if (empty($this->_allEvents[$fd_key])) {
-                    unset($this->_allEvents[$fd_key]);
-                }
-                return true;
-            case self::EV_WRITE:
-                unset($this->_allEvents[$fd_key][$flag], $this->_writeFds[$fd_key]);
-                if (empty($this->_allEvents[$fd_key])) {
-                    unset($this->_allEvents[$fd_key]);
-                }
-                return true;
-            case self::EV_EXCEPT:
-                unset($this->_allEvents[$fd_key][$flag], $this->_exceptFds[$fd_key]);
-                if(empty($this->_allEvents[$fd_key]))
-                {
                     unset($this->_allEvents[$fd_key]);
                 }
                 return true;
@@ -348,67 +298,36 @@ class Select implements EventInterface
     }
 
     /**
+     * @param int $blockingTime 微秒
      * {@inheritdoc}
      */
-    public function loop()
+    public function loop($blockingTime=10000)
     {
+        $blockingTime = (int)$blockingTime;
+        if ($blockingTime <= 0) {
+            $blockingTime = 1;
+        }
         while (1) {
             if(\DIRECTORY_SEPARATOR === '/') {
                 // Calls signal handlers for pending signals
                 \pcntl_signal_dispatch();
             }
 
-            $read  = $this->_readFds;
-            $write = $this->_writeFds;
-            $except = $this->_exceptFds;
-
-            if ($read || $write || $except) {
-                // Waiting read/write/signal/timeout events.
-                try {
-                    $ret = @stream_select($read, $write, $except, 0, $this->_selectTimeout);
-                } catch (\Exception $e) {} catch (\Error $e) {}
-
+            if ($this->_selectTimeout >= 1 && $this->_selectTimeout < $blockingTime) {
+                usleep((int)$this->_selectTimeout);
             } else {
-                usleep($this->_selectTimeout);
-                $ret = false;
+                usleep($blockingTime);
             }
-
 
             if (!$this->_scheduler->isEmpty()) {
                 $this->tick();
             }
 
-            if (!$ret) {
-                continue;
-            }
-
-            if ($read) {
-                foreach ($read as $fd) {
-                    $fd_key = (int)$fd;
-                    if (isset($this->_allEvents[$fd_key][self::EV_READ])) {
-                        \call_user_func_array($this->_allEvents[$fd_key][self::EV_READ][0],
-                            array($this->_allEvents[$fd_key][self::EV_READ][1]));
-                    }
-                }
-            }
-
-            if ($write) {
-                foreach ($write as $fd) {
-                    $fd_key = (int)$fd;
-                    if (isset($this->_allEvents[$fd_key][self::EV_WRITE])) {
-                        \call_user_func_array($this->_allEvents[$fd_key][self::EV_WRITE][0],
-                            array($this->_allEvents[$fd_key][self::EV_WRITE][1]));
-                    }
-                }
-            }
-
-            if($except) {
-                foreach($except as $fd) {
-                    $fd_key = (int) $fd;
-                    if(isset($this->_allEvents[$fd_key][self::EV_EXCEPT])) {
-                        \call_user_func_array($this->_allEvents[$fd_key][self::EV_EXCEPT][0],
-                            array($this->_allEvents[$fd_key][self::EV_EXCEPT][1]));
-                    }
+            foreach ($this->_readFds as $fd) {
+                $fd_key = (int)$fd;
+                if (isset($this->_allEvents[$fd_key][self::EV_READ])) {
+                    \call_user_func_array($this->_allEvents[$fd_key][self::EV_READ][0],
+                        array($this->_allEvents[$fd_key][self::EV_READ][1]));
                 }
             }
         }
@@ -708,6 +627,12 @@ class Worker
     public $count = 1;
 
     /**
+     * 阻塞时间 单位 秒
+     * @var float
+     */
+    public $blockingTime = 0.01;
+
+    /**
      * Unix user of processes, needs appropriate privileges (usually root).
      *
      * @var string
@@ -736,6 +661,13 @@ class Worker
     public $onWorkerStart = null;
 
     /**
+     * Emitted when data is received.
+     *
+     * @var callable
+     */
+    public $onRun = null;
+
+    /**
      * Emitted when worker processes stoped.
      *
      * @var callable
@@ -748,6 +680,14 @@ class Worker
      * @var callable
      */
     public $onWorkerReload = null;
+
+
+    /**
+     * Pause accept new connections or not.
+     *
+     * @var bool
+     */
+    protected $_pause = true;
 
     /**
      * Is worker stopping ?
@@ -786,7 +726,7 @@ class Worker
     /**
      * Global event loop.
      *
-     * @var EventInterface
+     * @var Select|EventInterface
      */
     public static $globalEvent = null;
 
@@ -946,6 +886,12 @@ class Worker
      * @var array
      */
     protected static $_processForWindows = array();
+
+    protected static $statistics = array(
+      'total_run'=>0,
+      'run_ok' =>0,
+      'run_fail' =>0,
+    );
 
     /**
      * Status info of current worker process.
@@ -1505,12 +1451,10 @@ class Worker
         $total_fails = 0;
         $total_memory = 0;
         $total_timers = 0;
-        $maxLen1 = static::$_maxSocketNameLength;
-        $maxLen2 = static::$_maxWorkerNameLength;
         foreach($info as $key => $value) {
             if (!$read_process_status) {
                 $status_str .= $value . "\n";
-                if (\preg_match('/^pid.*?memory.*?listening/', $value)) {
+                if (\preg_match('/^pid.*?memory/', $value)) {
                     $read_process_status = true;
                 }
                 continue;
@@ -1518,25 +1462,21 @@ class Worker
             if(\preg_match('/^[0-9]+/', $value, $pid_math)) {
                 $pid = $pid_math[0];
                 $data_waiting_sort[$pid] = $value;
-                if(\preg_match('/^\S+?\s+?(\S+?)\s+?(\S+?)\s+?(\S+?)\s+?(\S+?)\s+?(\S+?)\s+?(\S+?)\s+?(\S+?)\s+?/', $value, $match)) {
+                if(\preg_match('/^\S+?\s+?(\S+?)\s+?(\S+?)\s+?(\S+?)\s+?(\S+?)\s+?(\S+?)\s+?/', $value, $match)) {
                     $total_memory += \intval(\str_ireplace('M','',$match[1]));
-                    $maxLen1 = \max($maxLen1,\strlen($match[2]));
-                    $maxLen2 = \max($maxLen2,\strlen($match[3]));
-                    $total_connections += \intval($match[4]);
-                    $total_fails += \intval($match[5]);
-                    $total_timers += \intval($match[6]);
-                    $current_total_request[$pid] = $match[7];
-                    $total_requests += \intval($match[7]);
+                    $total_connections += \intval($match[2]);
+                    $total_fails += \intval($match[3]);
+                    $total_timers += \intval($match[4]);
+                    $current_total_request[$pid] = $match[5];
+                    $total_requests += \intval($match[5]);
                 }
             }
         }
         foreach($worker_info as $pid => $info) {
             if (!isset($data_waiting_sort[$pid])) {
                 $status_str .= "$pid\t" . \str_pad('N/A', 7) . " "
-                    . \str_pad($info['listen'], static::$_maxSocketNameLength) . " "
-                    . \str_pad($info['name'], static::$_maxWorkerNameLength) . " "
-                    . \str_pad('N/A', 11) . " " . \str_pad('N/A', 9) . " "
-                    . \str_pad('N/A', 7) . " " . \str_pad('N/A', 13) . " N/A    [busy] \n";
+                    . \str_pad('N/A', 10) . " " . \str_pad('N/A', 8) . " "
+                    . \str_pad('N/A', 8) . " " . \str_pad('N/A', 10) . " N/A    [busy] \n";
                 continue;
             }
             //$qps = isset($total_request_cache[$pid]) ? $current_total_request[$pid]
@@ -1551,10 +1491,8 @@ class Worker
         $total_request_cache = $current_total_request;
         $status_str .= "----------------------------------------------PROCESS STATUS---------------------------------------------------\n";
         $status_str .= "Summary\t" . \str_pad($total_memory.'M', 7) . " "
-            . \str_pad('-', $maxLen1) . " "
-            . \str_pad('-', $maxLen2) . " "
-            . \str_pad($total_connections, 11) . " " . \str_pad($total_fails, 9) . " "
-            . \str_pad($total_timers, 7) . " " . \str_pad($total_requests, 13) . " "
+            . \str_pad($total_connections, 10) . " " . \str_pad($total_fails, 8) . " "
+            . \str_pad($total_timers, 8) . " " . \str_pad($total_requests, 10) . " "
             . \str_pad($total_qps,6)." [Summary] \n";
         return $status_str;
     }
@@ -2376,9 +2314,8 @@ class Worker
                 "----------------------------------------------PROCESS STATUS---------------------------------------------------\n",
                 \FILE_APPEND);
             \file_put_contents(static::$_statisticsFile,
-                "pid\tmemory  " . \str_pad('listening', static::$_maxSocketNameLength) . " " . \str_pad('worker_name',
-                    static::$_maxWorkerNameLength) . " connections " . \str_pad('send_fail', 9) . " "
-                . \str_pad('timers', 8) . \str_pad('total_request', 13) ." qps    status\n", \FILE_APPEND);
+                "pid\tmemory  " . \str_pad('run_ok', 10)." " . \str_pad('run_fail', 8) . " "
+                . \str_pad('timers', 8) . \str_pad('total_run', 10) ." qps    status\n", \FILE_APPEND);
 
             \chmod(static::$_statisticsFile, 0722);
 
@@ -2393,9 +2330,11 @@ class Worker
         /** @var \Worker\Worker $worker */
         $worker            = current(static::$_workers);
         $worker_status_str = \posix_getpid() . "\t" . \str_pad(round(memory_get_usage(true) / (1024 * 1024), 2) . "M", 7)
-            . " " . \str_pad($worker->getSocketName(), static::$_maxSocketNameLength) . " "
-            . \str_pad(($worker->name === $worker->getSocketName() ? 'none' : $worker->name), static::$_maxWorkerNameLength)
             . " ";
+        $worker_status_str .= \str_pad(static::$statistics['run_ok'], 10)
+            . " " .  \str_pad(static::$statistics['run_fail'], 8)
+            . " " . \str_pad(static::$globalEvent->getTimerCount(), 8)
+            . " " . \str_pad(static::$statistics['total_run'], 10) . "\n";
         \file_put_contents(static::$_statisticsFile, $worker_status_str, \FILE_APPEND);
     }
 
@@ -2521,6 +2460,22 @@ class Worker
         static::$_pidMap[$this->workerId]  = array();
     }
 
+    public function pause()
+    {
+        if (static::$globalEvent && false === $this->_pause && $this->_mainSocket) {
+            static::$globalEvent->del($this->_mainSocket, EventInterface::EV_READ);
+            $this->_pause = true;
+        }
+    }
+
+    public function resume()
+    {
+        if (static::$globalEvent && $this->_mainSocket) {
+            static::$globalEvent->add($this->_mainSocket, EventInterface::EV_READ, array($this, 'acceptHandle'));
+            $this->_pause = false;
+        }
+    }
+
     /**
      * Get socket name.
      *
@@ -2538,6 +2493,10 @@ class Worker
      */
     public function run()
     {
+        if (!$this->_mainSocket) {
+            $this->_mainSocket = spl_object_hash($this); //fopen('php://stdin', 'r');
+        }
+
         //Update process state.
         static::$_status = static::STATUS_RUNNING;
 
@@ -2548,6 +2507,7 @@ class Worker
         if (!static::$globalEvent) {
             $event_loop_class = static::getEventLoopName();
             static::$globalEvent = new $event_loop_class;
+            $this->resume();
         }
 
         // Reinstall signal.
@@ -2555,6 +2515,11 @@ class Worker
 
         // Init Timer.
         Timer::init(static::$globalEvent);
+
+        // Set an empty onMessage callback.
+        if (empty($this->onRun)) {
+            $this->onRun = function () {};
+        }
 
         \restore_error_handler();
 
@@ -2574,7 +2539,7 @@ class Worker
         }
 
         // Main loop.
-        static::$globalEvent->loop();
+        static::$globalEvent->loop($this->blockingTime * 1000000);
     }
 
     /**
@@ -2593,6 +2558,44 @@ class Worker
             } catch (\Error $e) {
                 static::stopAll(250, $e);
             }
+        }
+        // Remove listener for server socket.
+        $this->pause();
+        if ($this->_mainSocket) {
+            $this->_mainSocket = null;
+        }
+
+        // Clear callback.
+        $this->onRun = null;
+    }
+
+    public function acceptHandle()
+    {
+        if ($this->onRun) {
+            try {
+                \call_user_func($this->onRun, $this);
+            } catch (\Exception $e) {
+                static::stopAll(250, $e);
+            } catch (\Error $e) {
+                static::stopAll(250, $e);
+            }
+        }
+        //yield;
+    }
+
+    /**
+     * 统计运行状态
+     * @param null $status true成功 false失败 null无任何处理
+     */
+    public function runStatus($status = null)
+    {
+        if ($status === null) return;
+
+        ++static::$statistics['total_run'];
+        if ($status) {
+            ++static::$statistics['run_ok'];
+        } else {
+            ++static::$statistics['run_fail'];
         }
     }
 
