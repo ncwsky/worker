@@ -130,6 +130,11 @@ class Select implements EventInterface
     public $_signalEvents = array();
 
     /**
+     * @var int 循环阻塞时间 微秒
+     */
+    public $blockingTime = 1000000;
+
+    /**
      * Fds waiting for read event.
      *
      * @var array
@@ -165,6 +170,7 @@ class Select implements EventInterface
      * @var int
      */
     protected $_selectTimeout = 100000000;
+
 
     /**
      * Construct.
@@ -298,16 +304,16 @@ class Select implements EventInterface
     }
 
     /**
-     * @param int $blockingTime 微秒
      * {@inheritdoc}
      */
-    public function loop($blockingTime=10000)
+    public function loop()
     {
-        $blockingTime = (int)$blockingTime;
-        if ($blockingTime <= 0) {
-            $blockingTime = 1;
-        }
         while (1) {
+            $blockingTime = (int)$this->blockingTime; //微秒
+            if ($blockingTime < 0) {
+                $blockingTime = 0;
+            }
+
             if(\DIRECTORY_SEPARATOR === '/') {
                 // Calls signal handlers for pending signals
                 \pcntl_signal_dispatch();
@@ -315,7 +321,8 @@ class Select implements EventInterface
 
             if ($this->_selectTimeout >= 1 && $this->_selectTimeout < $blockingTime) {
                 usleep((int)$this->_selectTimeout);
-            } else {
+
+            } elseif ($blockingTime > 0) {
                 usleep($blockingTime);
             }
 
@@ -627,12 +634,6 @@ class Worker
     public $count = 1;
 
     /**
-     * 阻塞时间 单位 秒
-     * @var float
-     */
-    public $blockingTime = 0.01;
-
-    /**
      * Unix user of processes, needs appropriate privileges (usually root).
      *
      * @var string
@@ -757,6 +758,12 @@ class Worker
      * @var string
      */
     public static $processTitle = 'Worker';
+
+    /**
+     * 阻塞时间 秒
+     * @var float
+     */
+    public static $blockingTime = 1;
 
     /**
      * The PID of master process.
@@ -1778,6 +1785,7 @@ class Worker
         else
         {
             static::$globalEvent = new \Worker\Select();
+            static::$globalEvent->blockingTime = static::$blockingTime * 1000000;
             Timer::init(static::$globalEvent);
             foreach($files as $start_file)
             {
@@ -1827,6 +1835,7 @@ class Worker
 
         if (empty(static::$globalEvent)) {
             static::$globalEvent = new Select();
+            static::$globalEvent->blockingTime = static::$blockingTime * 1000000;
             Timer::init(static::$globalEvent);
         }
         $timer_id = Timer::add(0.1, function()use($std_handler)
@@ -2507,6 +2516,7 @@ class Worker
         if (!static::$globalEvent) {
             $event_loop_class = static::getEventLoopName();
             static::$globalEvent = new $event_loop_class;
+            static::$globalEvent->blockingTime = static::$blockingTime * 1000000;
             $this->resume();
         }
 
@@ -2539,7 +2549,7 @@ class Worker
         }
 
         // Main loop.
-        static::$globalEvent->loop($this->blockingTime * 1000000);
+        static::$globalEvent->loop();
     }
 
     /**
@@ -2589,7 +2599,13 @@ class Worker
      */
     public function runStatus($status = null)
     {
-        if ($status === null) return;
+        if ($status === null) {
+            //无处理时加阻塞时间
+            static::$globalEvent->blockingTime = static::$blockingTime * 1000000;
+            return;
+        }
+        //有处理时取消阻塞
+        static::$globalEvent->blockingTime = 0;
 
         ++static::$statistics['total_run'];
         if ($status) {

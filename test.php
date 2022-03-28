@@ -3,6 +3,7 @@ require __DIR__ . '/Worker.php';
 
 \Worker\Worker::$logFile = __DIR__ . '/log.log';
 \Worker\Worker::$pidFile = __DIR__ . '/worker.pid';
+//\Worker\Worker::$blockingTime = 0.001; // 设置为0无处理数据时cpu容易100% 建设默认或自定义值
 $worker = new \Worker\Worker();
 // 4 processes
 $worker->name = 'test';
@@ -13,15 +14,15 @@ $worker->onWorkerStart = function (\Worker\Worker $worker) {
     });
 };
 $worker->onRun = function (\Worker\Worker $worker) {
-    echo 'ok-' . $worker->id . ':'. time(). PHP_EOL;
-
     $rand = mt_rand(0,9);
     if ($rand == 0) {
-        $result = null; //没有任何处理
-    } elseif ($rand == 1) {
+        echo 'fail--------' . $worker->id . ':'. time(). PHP_EOL;
         $result = false; //失败
-    } else {
+    } elseif ($rand <= 5) {
+        echo 'ok----------' . $worker->id . ':'. time(). PHP_EOL;
         $result = true; //成功
+    } else {
+        $result = null; //没有任何处理
     }
     $worker->runStatus($result); //运行结果
 };

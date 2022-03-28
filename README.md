@@ -17,7 +17,10 @@ $worker = new \Worker\Worker();
 // 4 processes
 $worker->count = 4;
 $worker->onWorkerStart = function (\Worker\Worker $worker) {
-    //todo
+    //todo 引入处理代码
+};
+$worker->onRun = function (\Worker\Worker $worker) {
+    //todo 逻辑处理
 };
 $worker->onWorkerStop = function (\Worker\Worker $worker) {
     //todo
