@@ -2315,7 +2315,7 @@ class Worker
                 \FILE_APPEND);
             \file_put_contents(static::$_statisticsFile,
                 "pid\tmemory  " . \str_pad('run_ok', 10)." " . \str_pad('run_fail', 8) . " "
-                . \str_pad('timers', 8) . \str_pad('total_run', 10) ." qps    status\n", \FILE_APPEND);
+                . \str_pad('timers', 8) . " " . \str_pad('total_run', 10) ." qps    status\n", \FILE_APPEND);
 
             \chmod(static::$_statisticsFile, 0722);
 
