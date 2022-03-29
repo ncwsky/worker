@@ -1,5 +1,7 @@
 
-copy from workerman 单文件仅进程服务
+单文件多进程处理框架
+
+复制于[workerman](https://github.com/walkor/workerman)  
 
 ## Installation
 
@@ -13,17 +15,39 @@ composer require myphps/worker
 
 require __DIR__ . '/Worker.php';
 
+\Worker\Worker::$logFile = __DIR__ . '/log.log';
+\Worker\Worker::$pidFile = __DIR__ . '/worker.pid';
+//\Worker\Worker::$blockingTime = 0.01; // 设置为0无处理数据时cpu容易100% 建设默认或自定义值
 $worker = new \Worker\Worker();
 // 4 processes
-$worker->count = 4;
+$worker->name = 'test';
+$worker->count = 2; //进程数
+$worker->alarm = 100; //失败预警值
 $worker->onWorkerStart = function (\Worker\Worker $worker) {
-    //todo 引入处理代码
+    //todo 引用代码
+    //增加定时器
+    \Worker\Timer::add(1, function () use ($worker) {
+        echo 'okT--------------------------------------------------' . $worker->id . ':' . time() . PHP_EOL;
+    });
 };
 $worker->onRun = function (\Worker\Worker $worker) {
-    //todo 逻辑处理
+    $rand = mt_rand(0, 9); //模拟处理结果
+    if ($rand == 0) {
+        echo 'fail--------' . $worker->id . ':' . time() . PHP_EOL;
+        $result = false; //失败
+    } elseif ($rand <= 5) {
+        echo 'ok----------' . $worker->id . ':' . time() . PHP_EOL;
+        $result = true; //成功
+    } else {
+        $result = null; //没有任何处理
+    }
+    $worker->runStatus($result); //运行结果
+};
+$worker->onAlarm = function (\Worker\Worker $worker) {
+    echo date("Y-m-d H:i:s") . '................. alarm ................. ' . PHP_EOL;
 };
 $worker->onWorkerStop = function (\Worker\Worker $worker) {
-    //todo
+    echo 'end', PHP_EOL;
 };
 // Run worker
 \Worker\Worker::runAll();

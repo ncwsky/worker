@@ -3,7 +3,7 @@ namespace Worker;
 
 use \Exception;
 /**
- * copy from workerman.
+ * copy from workerman. https://github.com/walkor/workerman
  */
 
 // Pcre.jit is not stable, temporarily disabled.
@@ -18,7 +18,10 @@ if (!class_exists('Error')) {
     class Error extends Exception{}
 }
 
-interface EventInterface
+/**
+ * select eventloop
+ */
+class EventSelect
 {
     /**
      * Read event.
@@ -62,59 +65,6 @@ interface EventInterface
      */
     const EV_TIMER_ONCE = 16;
 
-    /**
-     * Add event listener to event loop.
-     *
-     * @param mixed    $fd
-     * @param int      $flag
-     * @param callable $func
-     * @param mixed    $args
-     * @return bool
-     */
-    public function add($fd, $flag, $func, $args = null);
-
-    /**
-     * Remove event listener from event loop.
-     *
-     * @param mixed $fd
-     * @param int   $flag
-     * @return bool
-     */
-    public function del($fd, $flag);
-
-    /**
-     * Remove all timers.
-     *
-     * @return void
-     */
-    public function clearAllTimer();
-
-    /**
-     * Main loop.
-     *
-     * @return void
-     */
-    public function loop();
-
-    /**
-     * Destroy loop.
-     *
-     * @return mixed
-     */
-    public function destroy();
-
-    /**
-     * Get Timer count.
-     *
-     * @return mixed
-     */
-    public function getTimerCount();
-}
-/**
- * select eventloop
- */
-class Select implements EventInterface
-{
     /**
      * All listeners for read/write event.
      *
@@ -321,7 +271,6 @@ class Select implements EventInterface
 
             if ($this->_selectTimeout >= 1 && $this->_selectTimeout < $blockingTime) {
                 usleep((int)$this->_selectTimeout);
-
             } elseif ($blockingTime > 0) {
                 usleep($blockingTime);
             }
@@ -384,7 +333,7 @@ class Timer
     /**
      * event
      *
-     * @var EventInterface
+     * @var EventSelect
      */
     protected static $_event = null;
 
@@ -410,7 +359,7 @@ class Timer
     /**
      * Init.
      *
-     * @param EventInterface $event
+     * @param EventSelect $event
      * @return void
      */
     public static function init($event = null)
@@ -459,7 +408,7 @@ class Timer
 
         if (self::$_event) {
             return self::$_event->add($time_interval,
-                $persistent ? EventInterface::EV_TIMER : EventInterface::EV_TIMER_ONCE, $func, $args);
+                $persistent ? EventSelect::EV_TIMER : EventSelect::EV_TIMER_ONCE, $func, $args);
         }
 
         if (!\is_callable($func)) {
@@ -505,7 +454,7 @@ class Timer
                     $time_interval = $one_task[3];
                     try {
                         \call_user_func_array($task_func, $task_args);
-                    } catch (\Exception $e) {
+                    } catch (Exception $e) {
                         Worker::safeEcho($e);
                     }
                     if($persistent && !empty(self::$_status[$index])) {
@@ -528,7 +477,7 @@ class Timer
     public static function del($timer_id)
     {
         if (self::$_event) {
-            return self::$_event->del($timer_id, EventInterface::EV_TIMER);
+            return self::$_event->del($timer_id, EventSelect::EV_TIMER);
         }
 
         foreach(self::$_tasks as $run_time => $task_data)
@@ -634,6 +583,11 @@ class Worker
     public $count = 1;
 
     /**
+     * @var int 失败预警值
+     */
+    public $alarm = 0;
+
+    /**
      * Unix user of processes, needs appropriate privileges (usually root).
      *
      * @var string
@@ -662,11 +616,18 @@ class Worker
     public $onWorkerStart = null;
 
     /**
-     * Emitted when data is received.
+     * 循环处理调用
      *
      * @var callable
      */
     public $onRun = null;
+
+    /**
+     * 失败预警调用 需要手动置每次的运行状态
+     *
+     * @var callable
+     */
+    public $onAlarm = null;
 
     /**
      * Emitted when worker processes stoped.
@@ -727,7 +688,7 @@ class Worker
     /**
      * Global event loop.
      *
-     * @var Select|EventInterface
+     * @var EventSelect
      */
     public static $globalEvent = null;
 
@@ -763,7 +724,13 @@ class Worker
      * 阻塞时间 秒
      * @var float
      */
-    public static $blockingTime = 1;
+    public static $blockingTime = 0.01;
+
+    /**
+     * 空闲阻塞时间 秒
+     * @var int
+     */
+    public static $idleBlockingTime = 2;
 
     /**
      * The PID of master process.
@@ -895,9 +862,10 @@ class Worker
     protected static $_processForWindows = array();
 
     protected static $statistics = array(
-      'total_run'=>0,
-      'run_ok' =>0,
-      'run_fail' =>0,
+        'total_run' => 0,
+        'run_ok' => 0,
+        'run_fail' => 0,
+        'run_idle' => 0,
     );
 
     /**
@@ -906,7 +874,8 @@ class Worker
      * @var array
      */
     protected static $_globalStatistics = array(
-        'start_timestamp'  => 0,
+        'alarm' => 0,
+        'start_timestamp' => 0,
         'worker_exit_info' => array()
     );
 
@@ -1131,7 +1100,7 @@ class Worker
     /**
      * Get global event-loop instance.
      *
-     * @return EventInterface
+     * @return EventSelect
      */
     public static function getEventLoop()
     {
@@ -1557,15 +1526,15 @@ class Worker
         \pcntl_signal(\SIGUSR2, \SIG_IGN, false);
 
         // reinstall stop signal handler
-        static::$globalEvent->add(\SIGINT, EventInterface::EV_SIGNAL, $signalHandler);
+        static::$globalEvent->add(\SIGINT, EventSelect::EV_SIGNAL, $signalHandler);
         // reinstall graceful stop signal handler
-        static::$globalEvent->add(\SIGHUP, EventInterface::EV_SIGNAL, $signalHandler);
+        static::$globalEvent->add(\SIGHUP, EventSelect::EV_SIGNAL, $signalHandler);
         // reinstall reload signal handler
-        static::$globalEvent->add(\SIGUSR1, EventInterface::EV_SIGNAL, $signalHandler);
+        static::$globalEvent->add(\SIGUSR1, EventSelect::EV_SIGNAL, $signalHandler);
         // reinstall graceful reload signal handler
-        static::$globalEvent->add(\SIGQUIT, EventInterface::EV_SIGNAL, $signalHandler);
+        static::$globalEvent->add(\SIGQUIT, EventSelect::EV_SIGNAL, $signalHandler);
         // reinstall status signal handler
-        static::$globalEvent->add(\SIGUSR2, EventInterface::EV_SIGNAL, $signalHandler);
+        static::$globalEvent->add(\SIGUSR2, EventSelect::EV_SIGNAL, $signalHandler);
     }
 
     /**
@@ -1693,7 +1662,7 @@ class Worker
             return static::$eventLoopClass;
         }
 
-        static::$eventLoopClass =  '\Worker\Select';
+        static::$eventLoopClass =  '\Worker\EventSelect';
         return static::$eventLoopClass;
     }
 
@@ -1784,7 +1753,7 @@ class Worker
         }
         else
         {
-            static::$globalEvent = new \Worker\Select();
+            static::$globalEvent = new \Worker\EventSelect();
             static::$globalEvent->blockingTime = static::$blockingTime * 1000000;
             Timer::init(static::$globalEvent);
             foreach($files as $start_file)
@@ -1834,7 +1803,7 @@ class Worker
         \stream_set_blocking($std_handler, false);
 
         if (empty(static::$globalEvent)) {
-            static::$globalEvent = new Select();
+            static::$globalEvent = new EventSelect();
             static::$globalEvent->blockingTime = static::$blockingTime * 1000000;
             Timer::init(static::$globalEvent);
         }
@@ -2108,7 +2077,7 @@ class Worker
                 if (static::$onMasterReload) {
                     try {
                         \call_user_func(static::$onMasterReload);
-                    } catch (\Exception $e) {
+                    } catch (Exception $e) {
                         static::stopAll(250, $e);
                     } catch (\Error $e) {
                         static::stopAll(250, $e);
@@ -2165,7 +2134,7 @@ class Worker
             if ($worker->onWorkerReload) {
                 try {
                     \call_user_func($worker->onWorkerReload, $worker);
-                } catch (\Exception $e) {
+                } catch (Exception $e) {
                     static::stopAll(250, $e);
                 } catch (\Error $e) {
                     static::stopAll(250, $e);
@@ -2472,7 +2441,7 @@ class Worker
     public function pause()
     {
         if (static::$globalEvent && false === $this->_pause && $this->_mainSocket) {
-            static::$globalEvent->del($this->_mainSocket, EventInterface::EV_READ);
+            static::$globalEvent->del($this->_mainSocket, EventSelect::EV_READ);
             $this->_pause = true;
         }
     }
@@ -2480,7 +2449,7 @@ class Worker
     public function resume()
     {
         if (static::$globalEvent && $this->_mainSocket) {
-            static::$globalEvent->add($this->_mainSocket, EventInterface::EV_READ, array($this, 'acceptHandle'));
+            static::$globalEvent->add($this->_mainSocket, EventSelect::EV_READ, array($this, 'acceptHandle'));
             $this->_pause = false;
         }
     }
@@ -2537,7 +2506,7 @@ class Worker
         if ($this->onWorkerStart) {
             try {
                 \call_user_func($this->onWorkerStart, $this);
-            } catch (\Exception $e) {
+            } catch (Exception $e) {
                 // Avoid rapid infinite loop exit.
                 sleep(1);
                 static::stopAll(250, $e);
@@ -2563,7 +2532,7 @@ class Worker
         if ($this->onWorkerStop) {
             try {
                 \call_user_func($this->onWorkerStop, $this);
-            } catch (\Exception $e) {
+            } catch (Exception $e) {
                 static::stopAll(250, $e);
             } catch (\Error $e) {
                 static::stopAll(250, $e);
@@ -2584,9 +2553,11 @@ class Worker
         if ($this->onRun) {
             try {
                 \call_user_func($this->onRun, $this);
-            } catch (\Exception $e) {
+            } catch (Exception $e) {
+                $this->runStatus(false);
                 static::stopAll(250, $e);
             } catch (\Error $e) {
+                $this->runStatus(false);
                 static::stopAll(250, $e);
             }
         }
@@ -2600,18 +2571,45 @@ class Worker
     public function runStatus($status = null)
     {
         if ($status === null) {
-            //无处理时加阻塞时间
-            static::$globalEvent->blockingTime = static::$blockingTime * 1000000;
+            //无处理时阻塞
+            static::$blockingTime;
+            if (static::$idleBlockingTime > static::$blockingTime && static::$statistics['run_idle'] > static::$idleBlockingTime / static::$blockingTime) {
+                static::$globalEvent->blockingTime = static::$idleBlockingTime * 1000000;
+            } else {
+                static::$globalEvent->blockingTime = static::$blockingTime * 1000000;
+            }
+            ++static::$statistics['run_idle'];
             return;
         }
+
         //有处理时取消阻塞
         static::$globalEvent->blockingTime = 0;
-
+        static::$statistics['run_idle'] = 0;
         ++static::$statistics['total_run'];
         if ($status) {
             ++static::$statistics['run_ok'];
         } else {
             ++static::$statistics['run_fail'];
+            $this->checkAlarm();
+        }
+    }
+
+    protected function checkAlarm()
+    {
+        if ($this->alarm <= 0) return;
+        //失败预警触发处理
+        ++static::$_globalStatistics['alarm'];
+        if (static::$_globalStatistics['alarm'] >= $this->alarm) {
+            if ($this->onAlarm) {
+                try {
+                    \call_user_func($this->onAlarm, $this);
+                } catch (Exception $e) {
+                    static::stopAll(250, $e);
+                } catch (\Error $e) {
+                    static::stopAll(250, $e);
+                }
+            }
+            static::$_globalStatistics['alarm'] = 0;
         }
     }
 
