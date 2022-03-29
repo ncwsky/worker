@@ -721,16 +721,10 @@ class Worker
     public static $processTitle = 'Worker';
 
     /**
-     * 阻塞时间 秒
+     * 空闲阻塞时间 秒
      * @var float
      */
-    public static $blockingTime = 0.01;
-
-    /**
-     * 空闲阻塞时间 秒
-     * @var int
-     */
-    public static $idleBlockingTime = 2;
+    public static $blockingTime = 0.5;
 
     /**
      * The PID of master process.
@@ -865,7 +859,6 @@ class Worker
         'total_run' => 0,
         'run_ok' => 0,
         'run_fail' => 0,
-        'run_idle' => 0,
     );
 
     /**
@@ -2571,20 +2564,13 @@ class Worker
     public function runStatus($status = null)
     {
         if ($status === null) {
-            //无处理时阻塞
-            static::$blockingTime;
-            if (static::$idleBlockingTime > static::$blockingTime && static::$statistics['run_idle'] > static::$idleBlockingTime / static::$blockingTime) {
-                static::$globalEvent->blockingTime = static::$idleBlockingTime * 1000000;
-            } else {
-                static::$globalEvent->blockingTime = static::$blockingTime * 1000000;
-            }
-            ++static::$statistics['run_idle'];
+            //空闲阻塞
+            static::$globalEvent->blockingTime = static::$blockingTime * 1000000;
             return;
         }
 
         //有处理时取消阻塞
         static::$globalEvent->blockingTime = 0;
-        static::$statistics['run_idle'] = 0;
         ++static::$statistics['total_run'];
         if ($status) {
             ++static::$statistics['run_ok'];
