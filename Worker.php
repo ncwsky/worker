@@ -588,6 +588,11 @@ class Worker
     public $alarm = 0;
 
     /**
+     * @var int 最大运行次数 达成重载进程
+     */
+    public $maxRunTimes = 0;
+
+    /**
      * Unix user of processes, needs appropriate privileges (usually root).
      *
      * @var string
@@ -2569,7 +2574,7 @@ class Worker
             return;
         }
 
-        //有处理时取消阻塞
+        // 有处理时取消阻塞
         static::$globalEvent->blockingTime = 0;
         ++static::$statistics['total_run'];
         if ($status) {
@@ -2577,6 +2582,10 @@ class Worker
         } else {
             ++static::$statistics['run_fail'];
             $this->checkAlarm();
+        }
+        // 请求数达到xx后退出当前进程，主进程会自动重启一个新的进程
+        if ($this->maxRunTimes > 0 && static::$statistics['total_run'] >= $this->maxRunTimes) {
+            static::stopAll();
         }
     }
 
