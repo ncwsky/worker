@@ -621,7 +621,7 @@ class Worker
     public $onWorkerStart = null;
 
     /**
-     * 循环处理调用
+     * 循环处理调用 function($this) bool|null{ ... }
      *
      * @var callable
      */
@@ -2550,7 +2550,7 @@ class Worker
     {
         if ($this->onRun) {
             try {
-                \call_user_func($this->onRun, $this);
+                $this->runStatus(\call_user_func($this->onRun, $this));
             } catch (Exception $e) {
                 $this->runStatus(false);
                 static::stopAll(250, $e);
@@ -2559,7 +2559,6 @@ class Worker
                 static::stopAll(250, $e);
             }
         }
-        //yield;
     }
 
     /**

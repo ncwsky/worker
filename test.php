@@ -1,3 +1,4 @@
+#!/usr/bin/env php
 <?php
 require __DIR__ . '/Worker.php';
 
@@ -27,7 +28,7 @@ $worker->onRun = function (\Worker\Worker $worker) {
     } else {
         $result = null; //没有任何处理
     }
-    $worker->runStatus($result); //运行结果
+    return $result; //运行结果
 };
 $worker->onAlarm = function (\Worker\Worker $worker) {
     echo date("Y-m-d H:i:s") . '................. alarm ................. ' . PHP_EOL;
