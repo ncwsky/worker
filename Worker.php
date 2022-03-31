@@ -2543,7 +2543,7 @@ class Worker
         }
 
         // Clear callback.
-        $this->onRun = null;
+        $this->onRun = $this->onAlarm = null;
     }
 
     public function acceptHandle()
