@@ -2302,16 +2302,13 @@ class Worker
         }
 
         // For child processes.
-        \reset(static::$_workers);
-        /** @var \Worker\Worker $worker */
-        $worker            = current(static::$_workers);
         $worker_status_str = \posix_getpid() . "\t" . \str_pad(round(memory_get_usage(true) / (1024 * 1024), 2) . "M", 7)
             . " ";
         $worker_status_str .= \str_pad(static::$statistics['run_ok'], 10)
             . " " .  \str_pad(static::$statistics['run_fail'], 8)
             . " " . \str_pad(static::$globalEvent->getTimerCount(), 8)
             . " " . \str_pad(static::$statistics['total_run'], 10) . "\n";
-        \file_put_contents(static::$_statisticsFile, $worker_status_str, \FILE_APPEND);
+        \file_put_contents(static::$_statisticsFile, $worker_status_str, \FILE_APPEND | \LOCK_EX);
     }
 
     /**
