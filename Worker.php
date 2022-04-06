@@ -516,7 +516,7 @@ class Worker
      *
      * @var string
      */
-    const VERSION = '1.0.0';
+    const VERSION = '1.0.1';
 
     /**
      * Status starting.
@@ -1261,12 +1261,13 @@ class Worker
         global $argv;
         // Check argv;
         $start_file = $argv[0];
-        $usage = "Usage: php yourfile <command> [mode]\nCommands: \nstart\t\tStart worker in DEBUG mode.\n\t\tUse mode -d to start in DAEMON mode.\nstop\t\tStop worker.\n\t\tUse mode -g to stop gracefully.\nrestart\t\tRestart workers.\n\t\tUse mode -d to start in DAEMON mode.\n\t\tUse mode -g to stop gracefully.\nreload\t\tReload codes.\n\t\tUse mode -g to reload gracefully.\nstatus\t\tGet worker status.\n\t\tUse mode -d to show live status.\n";
+        $usage = "Usage: php yourfile <command> [mode]\nCommands: \nstart\t\tStart worker in DEBUG mode.\n\t\tUse mode -d to start in DAEMON mode.\nstop\t\tStop worker.\n\t\tUse mode -g to stop gracefully.\nrestart\t\tRestart workers.\n\t\tUse mode -d to start in DAEMON mode.\n\t\tUse mode -g to stop gracefully.\nreload\t\tReload codes.\n\t\tUse mode -g to reload gracefully.\nstatus\t\tGet worker status.\n\t\tUse mode -d to show live status.\nrelog \treset log\n";
         $available_commands = array(
             'start',
             'stop',
             'restart',
             'reload',
+            'relog',
             'status',
         );
         $available_mode = array(
@@ -1388,6 +1389,9 @@ class Worker
                 }
                 \posix_kill($master_pid, $sig);
                 exit;
+            case 'relog':
+                static::relog();
+                exit(0);
             default :
                 if (isset($command)) {
                     static::safeEcho('Unknown command: ' . $command . "\n");
@@ -2142,6 +2146,17 @@ class Worker
             if ($worker->reloadable) {
                 static::stopAll();
             }
+        }
+    }
+
+    /**
+     * clear log
+     */
+    protected static function relog()
+    {
+        if (is_file(static::$logFile)) {
+            file_put_contents(static::$logFile, '', LOCK_EX);
+            clearstatcache(true, static::$logFile);
         }
     }
 
