@@ -17,9 +17,8 @@ require __DIR__ . '/Worker.php';
 
 \Worker\Worker::$logFile = __DIR__ . '/log.log';
 \Worker\Worker::$pidFile = __DIR__ . '/worker.pid';
-//\Worker\Worker::$blockingTime = 0.01; // 设置为0无处理数据时cpu容易100% 建设默认或自定义值
 $worker = new \Worker\Worker();
-// 4 processes
+// 2 processes
 $worker->name = 'test';
 $worker->count = 2; //进程数
 $worker->alarm = 100; //失败预警值
