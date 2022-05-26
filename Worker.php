@@ -6,17 +6,14 @@ use \Exception;
  * copy from workerman. https://github.com/walkor/workerman
  */
 
-// Pcre.jit is not stable, temporarily disabled.
-ini_set('pcre.jit', 0);
-
 // Define OS Type
 const OS_TYPE_LINUX   = 'linux';
 const OS_TYPE_WINDOWS = 'windows';
-
+/*
 // Compatible with php7
 if (!class_exists('Error')) {
     class Error extends Exception{}
-}
+}*/
 
 /**
  * select eventloop
@@ -80,10 +77,10 @@ class EventSelect
     public $_signalEvents = array();
 
     /**
-     * @var int 循环阻塞时间 微秒
+     * @var int 循环阻塞时间 微秒 用于没有资源流时阻塞
      */
     public $blockingTime = 1000000;
-
+    public $workerRun = null; //进程运行
     /**
      * Fds waiting for read event.
      *
@@ -259,24 +256,44 @@ class EventSelect
     public function loop()
     {
         while (1) {
-            $blockingTime = (int)$this->blockingTime; //微秒
-            if ($blockingTime < 0) {
-                $blockingTime = 0;
-            }
-
             if(\DIRECTORY_SEPARATOR === '/') {
                 // Calls signal handlers for pending signals
                 \pcntl_signal_dispatch();
             }
 
-            if ($this->_selectTimeout >= 1 && $this->_selectTimeout < $blockingTime) {
-                usleep((int)$this->_selectTimeout);
-            } elseif ($blockingTime > 0) {
-                usleep($blockingTime);
+            $ret  = true;
+            if ($this->_readFds) { //有资源流使用select机制
+                $read = $this->_readFds;
+                $write  = null;
+                $except = null;
+
+                $timeout = $this->_selectTimeout;
+                if ($this->_selectTimeout > $this->blockingTime && $this->blockingTime>0) {
+                    $timeout = $this->blockingTime;
+                }
+
+                // Waiting read/write/signal/timeout events.
+                try {
+                    $ret = @stream_select($read, $write, $except, 0, $timeout);
+                } catch (\Exception $e) {} catch (\Error $e) {}
+            } else {
+                if ($this->_selectTimeout >= 1 && $this->_selectTimeout < $this->blockingTime) {
+                    usleep($this->_selectTimeout);
+                } elseif ($this->blockingTime > 0) {
+                    usleep($this->blockingTime);
+                }
             }
 
             if (!$this->_scheduler->isEmpty()) {
                 $this->tick();
+            }
+
+            if ($this->workerRun) {
+                \call_user_func($this->workerRun);
+            }
+
+            if (!$ret) {
+                continue;
             }
 
             foreach ($this->_readFds as $fd) {
@@ -726,10 +743,10 @@ class Worker
     public static $processTitle = 'Worker';
 
     /**
-     * 空闲阻塞时间 秒
+     * onRun运行空闲阻塞时间 秒
      * @var float
      */
-    public static $blockingTime = 0.5;
+    protected static $runBlockingTime = 0.5;
 
     /**
      * The PID of master process.
@@ -737,13 +754,6 @@ class Worker
      * @var int
      */
     protected static $_masterPid = 0;
-
-    /**
-     * Listening socket.
-     *
-     * @var resource
-     */
-    protected $_mainSocket = null;
 
     /**
      * Socket name. The format is like this http://0.0.0.0:80 .
@@ -1103,14 +1113,6 @@ class Worker
     public static function getEventLoop()
     {
         return static::$globalEvent;
-    }
-
-    /**
-     * Get main socket resource
-     * @return resource
-     */
-    public function getMainSocket(){
-        return $this->_mainSocket;
     }
 
     /**
@@ -1756,7 +1758,6 @@ class Worker
         else
         {
             static::$globalEvent = new \Worker\EventSelect();
-            static::$globalEvent->blockingTime = static::$blockingTime * 1000000;
             Timer::init(static::$globalEvent);
             foreach($files as $start_file)
             {
@@ -1806,7 +1807,6 @@ class Worker
 
         if (empty(static::$globalEvent)) {
             static::$globalEvent = new EventSelect();
-            static::$globalEvent->blockingTime = static::$blockingTime * 1000000;
             Timer::init(static::$globalEvent);
         }
         $timer_id = Timer::add(0.1, function()use($std_handler)
@@ -2044,6 +2044,7 @@ class Worker
     {
         Timer::add(1, "\\Worker\\Worker::checkWorkerStatusForWindows");
 
+        static::$globalEvent->blockingTime = static::$runBlockingTime;
         static::$globalEvent->loop();
     }
 
@@ -2438,28 +2439,34 @@ class Worker
     }
 
     /**
-     * Construct.
+     * Worker constructor.
+     * @param float $runBlockingTime 设置为0无效防止无处理数据时cpu容易100% 建设默认或自定义值
      */
-    public function __construct()
+    public function __construct($runBlockingTime = 0.5)
     {
         // Save all worker instances.
         $this->workerId                    = \spl_object_hash($this);
         static::$_workers[$this->workerId] = $this;
         static::$_pidMap[$this->workerId]  = array();
+
+        if ($runBlockingTime <= 0) $runBlockingTime = 0.5;
+        static::$runBlockingTime = intval($runBlockingTime * 1000000);
     }
 
     public function pause()
     {
-        if (static::$globalEvent && false === $this->_pause && $this->_mainSocket) {
-            static::$globalEvent->del($this->_mainSocket, EventSelect::EV_READ);
+        if (static::$globalEvent && false === $this->_pause) {
+            //static::$globalEvent->del(null, EventSelect::EV_READ);
+            static::$globalEvent->workerRun = null;
             $this->_pause = true;
         }
     }
 
     public function resume()
     {
-        if (static::$globalEvent && $this->_mainSocket) {
-            static::$globalEvent->add($this->_mainSocket, EventSelect::EV_READ, array($this, 'acceptHandle'));
+        if (static::$globalEvent) {
+            static::$globalEvent->workerRun = array($this, 'acceptHandle');
+            //static::$globalEvent->add(null, EventSelect::EV_READ, array($this, 'acceptHandle'));
             $this->_pause = false;
         }
     }
@@ -2481,10 +2488,6 @@ class Worker
      */
     public function run()
     {
-        if (!$this->_mainSocket) {
-            $this->_mainSocket = spl_object_hash($this); //fopen('php://stdin', 'r');
-        }
-
         //Update process state.
         static::$_status = static::STATUS_RUNNING;
 
@@ -2495,8 +2498,6 @@ class Worker
         if (!static::$globalEvent) {
             $event_loop_class = static::getEventLoopName();
             static::$globalEvent = new $event_loop_class;
-            static::$globalEvent->blockingTime = static::$blockingTime * 1000000;
-            $this->resume();
         }
 
         // Reinstall signal.
@@ -2505,9 +2506,10 @@ class Worker
         // Init Timer.
         Timer::init(static::$globalEvent);
 
-        // Set an empty onMessage callback.
+        // Set an empty onRun callback.
         if (empty($this->onRun)) {
             $this->onRun = function () {};
+            static::$runBlockingTime = 100000000;
         }
 
         \restore_error_handler();
@@ -2527,7 +2529,10 @@ class Worker
             }
         }
 
+        $this->resume();
+
         // Main loop.
+        static::$globalEvent->blockingTime = static::$runBlockingTime;
         static::$globalEvent->loop();
     }
 
@@ -2550,9 +2555,6 @@ class Worker
         }
         // Remove listener for server socket.
         $this->pause();
-        if ($this->_mainSocket) {
-            $this->_mainSocket = null;
-        }
 
         // Clear callback.
         $this->onRun = $this->onAlarm = null;
@@ -2581,7 +2583,7 @@ class Worker
     {
         if ($status === null) {
             //空闲阻塞
-            static::$globalEvent->blockingTime = static::$blockingTime * 1000000;
+            static::$globalEvent->blockingTime = static::$runBlockingTime;
             return;
         }
 
