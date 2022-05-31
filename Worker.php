@@ -15,6 +15,10 @@ if (!class_exists('Error')) {
     class Error extends Exception{}
 }*/
 
+defined('SIGALRM') || define ('SIGALRM', 14);
+defined('SIGTERM') || define('SIGTERM', 15); //中止服务
+defined('SIGUSR1') || define('SIGUSR1', 10); //柔性重启
+
 /**
  * select eventloop
  */
