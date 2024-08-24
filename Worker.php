@@ -93,6 +93,20 @@ class EventSelect
     protected $_readFds = array();
 
     /**
+     * Fds waiting for write event.
+     *
+     * @var array
+     */
+    protected $_writeFds = array();
+
+    /**
+     * Fds waiting for except event.
+     *
+     * @var array
+     */
+    protected $_exceptFds = array();
+
+    /**
      * Timer scheduler.
      * {['data':timer_id, 'priority':run_timestamp], ..}
      *
@@ -140,9 +154,25 @@ class EventSelect
     {
         switch ($flag) {
             case self::EV_READ:
+            case self::EV_WRITE:
+                $count = $flag === self::EV_READ ? \count($this->_readFds) : \count($this->_writeFds);
+                if ($count >= 1024) {
+                    echo "Warning: system call select exceeded the maximum number of connections 1024, please install event/libevent extension for more connections.\n";
+                } else if (\DIRECTORY_SEPARATOR !== '/' && $count >= 256) {
+                    echo "Warning: system call select exceeded the maximum number of connections 256.\n";
+                }
                 $fd_key                           = (int)$fd;
                 $this->_allEvents[$fd_key][$flag] = array($func, $fd);
-                $this->_readFds[$fd_key] = $fd;
+                if ($flag === self::EV_READ) {
+                    $this->_readFds[$fd_key] = $fd;
+                } else {
+                    $this->_writeFds[$fd_key] = $fd;
+                }
+                break;
+            case self::EV_EXCEPT:
+                $fd_key = (int)$fd;
+                $this->_allEvents[$fd_key][$flag] = array($func, $fd);
+                $this->_exceptFds[$fd_key] = $fd;
                 break;
             case self::EV_SIGNAL:
                 // Windows not support signal.
@@ -189,6 +219,19 @@ class EventSelect
             case self::EV_READ:
                 unset($this->_allEvents[$fd_key][$flag], $this->_readFds[$fd_key]);
                 if (empty($this->_allEvents[$fd_key])) {
+                    unset($this->_allEvents[$fd_key]);
+                }
+                return true;
+            case self::EV_WRITE:
+                unset($this->_allEvents[$fd_key][$flag], $this->_writeFds[$fd_key]);
+                if (empty($this->_allEvents[$fd_key])) {
+                    unset($this->_allEvents[$fd_key]);
+                }
+                return true;
+            case self::EV_EXCEPT:
+                unset($this->_allEvents[$fd_key][$flag], $this->_exceptFds[$fd_key]);
+                if(empty($this->_allEvents[$fd_key]))
+                {
                     unset($this->_allEvents[$fd_key]);
                 }
                 return true;
@@ -265,12 +308,12 @@ class EventSelect
                 \pcntl_signal_dispatch();
             }
 
-            $ret  = true;
-            if ($this->_readFds) { //有资源流使用select机制
-                $read = $this->_readFds;
-                $write  = null;
-                $except = null;
+            $ret  = false;
+            $read = $this->_readFds;
+            $write  = $this->_writeFds;
+            $except = $this->_exceptFds;
 
+            if ($read || $write || $except) { //有资源流使用select机制
                 $timeout = $this->_selectTimeout;
                 if ($this->_selectTimeout > $this->blockingTime && $this->blockingTime>0) {
                     $timeout = $this->blockingTime;
@@ -300,11 +343,33 @@ class EventSelect
                 continue;
             }
 
-            foreach ($this->_readFds as $fd) {
-                $fd_key = (int)$fd;
-                if (isset($this->_allEvents[$fd_key][self::EV_READ])) {
-                    \call_user_func_array($this->_allEvents[$fd_key][self::EV_READ][0],
-                        array($this->_allEvents[$fd_key][self::EV_READ][1]));
+            if ($read) {
+                foreach ($read as $fd) {
+                    $fd_key = (int)$fd;
+                    if (isset($this->_allEvents[$fd_key][self::EV_READ])) {
+                        \call_user_func_array($this->_allEvents[$fd_key][self::EV_READ][0],
+                            array($this->_allEvents[$fd_key][self::EV_READ][1]));
+                    }
+                }
+            }
+
+            if ($write) {
+                foreach ($write as $fd) {
+                    $fd_key = (int)$fd;
+                    if (isset($this->_allEvents[$fd_key][self::EV_WRITE])) {
+                        \call_user_func_array($this->_allEvents[$fd_key][self::EV_WRITE][0],
+                            array($this->_allEvents[$fd_key][self::EV_WRITE][1]));
+                    }
+                }
+            }
+
+            if($except) {
+                foreach($except as $fd) {
+                    $fd_key = (int) $fd;
+                    if(isset($this->_allEvents[$fd_key][self::EV_EXCEPT])) {
+                        \call_user_func_array($this->_allEvents[$fd_key][self::EV_EXCEPT][0],
+                            array($this->_allEvents[$fd_key][self::EV_EXCEPT][1]));
+                    }
                 }
             }
         }
@@ -810,41 +875,6 @@ class Worker
      * @var int
      */
     protected static $_maxWorkerNameLength = 12;
-
-    /**
-     * Maximum length of the socket names.
-     *
-     * @var int
-     */
-    protected static $_maxSocketNameLength = 12;
-
-    /**
-     * Maximum length of the process user names.
-     *
-     * @var int
-     */
-    protected static $_maxUserNameLength = 12;
-
-    /**
-     * Maximum length of the Proto names.
-     *
-     * @var int
-     */
-    protected static $_maxProtoNameLength = 4;
-
-    /**
-     * Maximum length of the Processes names.
-     *
-     * @var int
-     */
-    protected static $_maxProcessesNameLength = 9;
-
-    /**
-     * Maximum length of the Status names.
-     *
-     * @var int
-     */
-    protected static $_maxStatusNameLength = 1;
 
     /**
      * The file to store status info of current worker process.
