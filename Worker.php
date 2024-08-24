@@ -877,6 +877,41 @@ class Worker
     protected static $_maxWorkerNameLength = 12;
 
     /**
+     * Maximum length of the socket names.
+     *
+     * @var int
+     */
+    protected static $_maxSocketNameLength = 12;
+
+    /**
+     * Maximum length of the process user names.
+     *
+     * @var int
+     */
+    protected static $_maxUserNameLength = 12;
+
+    /**
+     * Maximum length of the Proto names.
+     *
+     * @var int
+     */
+    protected static $_maxProtoNameLength = 4;
+
+    /**
+     * Maximum length of the Processes names.
+     *
+     * @var int
+     */
+    protected static $_maxProcessesNameLength = 9;
+
+    /**
+     * Maximum length of the Status names.
+     *
+     * @var int
+     */
+    protected static $_maxStatusNameLength = 1;
+
+    /**
      * The file to store status info of current worker process.
      *
      * @var string
